@@ -37,6 +37,7 @@ use crate::message::{Message, MessageContent};
 use crate::model::ModelConfig;
 use crate::providers::formats::openai::create_request;
 use anyhow::Result;
+use cdk::wallet::Wallet;
 use mcp_core::tool::{Tool, ToolCall};
 use mcp_core::Content;
 use reqwest::Client;
@@ -303,6 +304,223 @@ pub fn format_tool_info(tools: &[Tool]) -> String {
         ));
     }
     tool_info
+}
+
+/// Routstr-specific implementation of the ToolInterpreter trait
+pub struct RoutstrInterpreter {
+    client: Client,
+    host: String,
+    wallet: Wallet,
+}
+
+impl RoutstrInterpreter {
+    pub fn new(wallet: Wallet) -> Result<Self, ProviderError> {
+        let config = crate::config::Config::global();
+        let host = config
+            .get_param("ROUTSTR_HOST")
+            .unwrap_or_else(|_| super::routstr::ROUTSTR_HOST.to_string());
+
+        let client = Client::builder()
+            .timeout(Duration::from_secs(600))
+            .build()
+            .expect("Failed to create HTTP client");
+
+        Ok(Self {
+            client,
+            host,
+            wallet,
+        })
+    }
+
+    async fn get_auth_token(&self) -> Result<String, ProviderError> {
+        let wallet = &self.wallet;
+
+        // Generate payment token using CDK wallet
+        let prepare_send = wallet
+            .prepare_send(50.into(), cdk::wallet::SendOptions::default())
+            .await
+            .map_err(|e| {
+                ProviderError::Authentication(format!("Failed to prepare payment: {}", e))
+            })?;
+
+        let token = wallet
+            .send(prepare_send, None)
+            .await
+            .map_err(|e| ProviderError::Authentication(format!("Failed to send payment: {}", e)))?
+            .to_v3_string();
+
+        Ok(token)
+    }
+
+    fn tool_structured_ouput_format_schema() -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "tool_calls": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "name": {
+                                "type": "string",
+                                "description": "The name of the tool to call"
+                            },
+                            "arguments": {
+                                "type": "object",
+                                "description": "The arguments to pass to the tool"
+                            }
+                        },
+                        "required": ["name", "arguments"]
+                    }
+                }
+            },
+            "required": ["tool_calls"]
+        })
+    }
+
+    async fn post_structured(
+        &self,
+        system_prompt: &str,
+        format_instruction: &str,
+        format_schema: Value,
+    ) -> Result<Value, ProviderError> {
+        let url = format!("{}/v1/chat/completions", self.host);
+
+        let mut messages = Vec::new();
+        let user_message = Message::user().with_text(format_instruction);
+        messages.push(user_message);
+
+        let model_config = ModelConfig::new(super::routstr::ROUTSTR_DEFAULT_MODEL.to_string());
+
+        let mut payload = create_request(
+            &model_config,
+            system_prompt,
+            &messages,
+            &[],
+            &super::utils::ImageFormat::OpenAi,
+        )?;
+
+        payload["format"] = format_schema;
+
+        let auth_token = self.get_auth_token().await?;
+
+        let response = self
+            .client
+            .post(&url)
+            .header("Authorization", format!("Bearer {}", auth_token))
+            .json(&payload)
+            .send()
+            .await?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+
+            let error_text = match response.text().await {
+                Ok(text) => text,
+                Err(_) => "Could not read error response".to_string(),
+            };
+
+            return Err(ProviderError::RequestFailed(format!(
+                "Routstr structured API returned error status {}: {}",
+                status, error_text
+            )));
+        }
+
+        let response_json: Value = response.json().await.map_err(|e| {
+            ProviderError::RequestFailed(format!(
+                "Failed to parse Routstr structured API response: {e}"
+            ))
+        })?;
+
+        Ok(response_json)
+    }
+
+    fn process_interpreter_response(response: &Value) -> Result<Vec<ToolCall>, ProviderError> {
+        let mut tool_calls = Vec::new();
+
+        if let Some(choices) = response.get("choices") {
+            if let Some(choice) = choices.as_array().and_then(|arr| arr.first()) {
+                if let Some(message) = choice.get("message") {
+                    if let Some(content) = message.get("content") {
+                        if let Ok(content_json) =
+                            serde_json::from_str::<Value>(content.as_str().unwrap_or_default())
+                        {
+                            if content_json.is_object() && content_json.get("tool_calls").is_some()
+                            {
+                                if let Some(tool_calls_array) =
+                                    content_json["tool_calls"].as_array()
+                                {
+                                    for item in tool_calls_array {
+                                        if item.is_object()
+                                            && item.get("name").is_some()
+                                            && item.get("arguments").is_some()
+                                        {
+                                            let name = item["name"]
+                                                .as_str()
+                                                .unwrap_or_default()
+                                                .to_string();
+                                            let arguments = item["arguments"].clone();
+                                            tool_calls.push(ToolCall::new(name, arguments));
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(tool_calls)
+    }
+}
+
+#[async_trait::async_trait]
+impl ToolInterpreter for RoutstrInterpreter {
+    async fn interpret_to_tool_calls(
+        &self,
+        last_assistant_msg: &str,
+        tools: &[Tool],
+    ) -> Result<Vec<ToolCall>, ProviderError> {
+        if tools.is_empty() {
+            return Ok(vec![]);
+        }
+
+        let system_prompt = "If there is detectable JSON-formatted tool requests, write them into valid JSON tool calls in the following format:
+{
+  \"tool_calls\": [
+    {
+      \"name\": \"tool_name\",
+      \"arguments\": {
+        \"param1\": \"value1\",
+        \"param2\": \"value2\"
+      }
+    }
+  ]
+}
+
+Otherwise, if no JSON tool requests are provided, use the no-op tool:
+{
+  \"tool_calls\": [
+    {
+    \"name\": \"noop\",
+      \"arguments\": {
+      }
+    }]
+}
+";
+
+        let format_instruction = format!("{}\nRequest: {}\n\n", system_prompt, last_assistant_msg);
+        let format_schema = RoutstrInterpreter::tool_structured_ouput_format_schema();
+
+        let interpreter_response = self
+            .post_structured("", &format_instruction, format_schema)
+            .await?;
+
+        let tool_calls = RoutstrInterpreter::process_interpreter_response(&interpreter_response)?;
+
+        Ok(tool_calls)
+    }
 }
 
 /// Convert messages containing ToolRequest/ToolResponse to text messages for toolshim mode

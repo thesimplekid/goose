@@ -14,6 +14,7 @@ use goose::config::{
     PermissionManager,
 };
 use goose::message::Message;
+use goose::providers::errors::ProviderError;
 use goose::providers::{create, providers};
 use mcp_core::tool::ToolAnnotations;
 use mcp_core::Tool;
@@ -330,9 +331,9 @@ pub async fn configure_provider_dialog() -> Result<bool, Box<dyn Error>> {
     // Attempt to fetch supported models for this provider
     let spin = spinner();
     spin.start("Attempting to fetch supported models...");
-    let models_res = {
+    let models_res: Result<Option<Vec<String>>, ProviderError> = {
         let temp_model_config = goose::model::ModelConfig::new(provider_meta.default_model.clone());
-        let temp_provider = create(provider_name, temp_model_config)?;
+        let temp_provider = create(provider_name, temp_model_config).unwrap();
         temp_provider.fetch_supported_models_async().await
     };
     spin.stop(style("Model fetch complete").green());

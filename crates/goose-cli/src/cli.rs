@@ -255,6 +255,14 @@ enum Command {
     #[command(about = "Configure Goose settings")]
     Configure {},
 
+    /// Manage wallet operations like balance and top-up
+    #[command(about = "Manage wallet operations")]
+    Wallet {
+        /// The cashu token to top up the wallet with
+        #[arg(long, help = "The cashu token to top up the wallet with")]
+        token: Option<String>,
+    },
+
     /// Display Goose configuration information
     #[command(about = "Display Goose information")]
     Info {
@@ -919,6 +927,14 @@ pub async fn cli() -> Result<()> {
         Some(Command::Web { port, host, open }) => {
             crate::commands::web::handle_web(port, host, open).await?;
             return Ok(());
+        }
+        Some(Command::Wallet { token }) => {
+            if let Some(token) = token {
+                crate::commands::wallet::handle_wallet_topup(token).await?
+            } else {
+                eprintln!("Error: Please provide a cashu token using --token");
+                std::process::exit(1);
+            }
         }
         None => {
             return if !Config::global().exists() {
