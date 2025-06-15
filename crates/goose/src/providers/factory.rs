@@ -14,6 +14,7 @@ use super::{
     ollama::OllamaProvider,
     openai::OpenAiProvider,
     openrouter::OpenRouterProvider,
+    routstr::RoutstrProvider,
     sagemaker_tgi::SageMakerTgiProvider,
     snowflake::SnowflakeProvider,
     venice::VeniceProvider,
@@ -49,6 +50,7 @@ pub fn providers() -> Vec<ProviderMetadata> {
         OllamaProvider::metadata(),
         OpenAiProvider::metadata(),
         OpenRouterProvider::metadata(),
+        RoutstrProvider::metadata(),
         SageMakerTgiProvider::metadata(),
         VeniceProvider::metadata(),
         SnowflakeProvider::metadata(),
@@ -112,6 +114,7 @@ fn create_lead_worker_from_env(
 }
 
 fn create_provider(name: &str, model: ModelConfig) -> Result<Arc<dyn Provider>> {
+    println!("name: {}, config: {:?}", name, model);
     // We use Arc instead of Box to be able to clone for multiple async tasks
     match name {
         "openai" => Ok(Arc::new(OpenAiProvider::from_env(model)?)),
@@ -128,6 +131,7 @@ fn create_provider(name: &str, model: ModelConfig) -> Result<Arc<dyn Provider>> 
         "venice" => Ok(Arc::new(VeniceProvider::from_env(model)?)),
         "snowflake" => Ok(Arc::new(SnowflakeProvider::from_env(model)?)),
         "github_copilot" => Ok(Arc::new(GithubCopilotProvider::from_env(model)?)),
+        "routstr" => Ok(Arc::new(RoutstrProvider::from_env(model)?)),
         _ => Err(anyhow::anyhow!("Unknown provider: {}", name)),
     }
 }

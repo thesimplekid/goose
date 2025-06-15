@@ -43,6 +43,11 @@ indoc = "1.0"
 uniffi = { version = "0.29", features = ["tokio", "cli", "scaffolding-ffi-buffer-fns"] }
 tokio = { version = "1.43", features = ["time", "sync"] }
 
+cdk = { version = "0.10.0", default-features = false, features = ["wallet"] }
+cdk-sqlite = { version = "0.10.0", default-features = false, features = ["wallet"] }
+home = "0.5.0"
+bip39 = "2.1.0"
+
 [dev-dependencies]
 criterion = "0.5"
 tempfile = "3.15.0"
