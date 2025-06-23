@@ -3,9 +3,11 @@ use async_trait::async_trait;
 use bip39::Mnemonic;
 use cdk::nuts::CurrencyUnit;
 use cdk::wallet::{SendOptions, Wallet};
+use cdk::Amount;
 use cdk_sqlite::WalletSqliteDatabase;
 use home::home_dir;
 use reqwest::Client;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::fs;
 use std::str::FromStr;
@@ -19,6 +21,7 @@ use super::toolshim::{augment_message_with_tool_calls, RoutstrInterpreter};
 use super::utils::{emit_debug_trace, get_model, handle_response_openai_compat, ImageFormat};
 use crate::message::Message;
 use crate::model::ModelConfig;
+use crate::token_counter::TokenCounter;
 use mcp_core::tool::Tool;
 
 pub const ROUTSTR_HOST: &str = "https://api.routstr.com";
@@ -33,6 +36,43 @@ pub const ROUTSTR_DOC_URL: &str = "https://routstr.com/docs";
 pub const ROUTSTR_DEFAULT_MINT_URL: &str = "https://mint.minibits.cash/Bitcoin";
 pub const ROUTSTR_DEFAULT_CURRENCY_UNIT: &str = "sat";
 
+/// Pricing information for a model
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModelPricing {
+    /// Price per input token (prompt)
+    pub prompt: f64,
+    /// Price per output token (completion)
+    pub completion: f64,
+}
+
+/// Individual model information
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModelInfo {
+    /// Model identifier (e.g., "gpt-4")
+    pub id: String,
+    /// Object type, should be "model"
+    pub object: String,
+    /// Unix timestamp of when the model was created
+    pub created: i64,
+    /// Organization that owns the model (e.g., "openai", "anthropic")
+    pub owned_by: String,
+    /// Permission information (typically empty array)
+    pub permission: Vec<Value>,
+    /// Pricing information for this model
+    pub pricing: ModelPricing,
+    /// Maximum context length supported by the model
+    pub context_length: u32,
+}
+
+/// Response structure for the /v1/models endpoint
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModelsResponse {
+    /// Object type, should be "list"
+    pub object: String,
+    /// Array of model information
+    pub data: Vec<ModelInfo>,
+}
+
 #[derive(Debug, serde::Serialize, Clone)]
 pub struct RoutstrProvider {
     #[serde(skip)]
@@ -41,12 +81,16 @@ pub struct RoutstrProvider {
     model: ModelConfig,
     #[serde(skip)]
     wallet: Arc<Wallet>,
+    prompt_cost: Option<f64>,
+    completion_cost: Option<f64>,
 }
 
 impl Default for RoutstrProvider {
     fn default() -> Self {
         let model = ModelConfig::new(RoutstrProvider::metadata().default_model).with_toolshim(true);
-        RoutstrProvider::from_env(model).expect("Failed to initialize Routstr provider")
+        // For the default implementation, we'll create a provider without pricing information
+        // The pricing will be fetched lazily when needed
+        Self::from_env(model).expect("Failed to initialize Routstr provider")
     }
 }
 
@@ -109,11 +153,53 @@ impl RoutstrProvider {
 
         let wallet = Wallet::new(&mint_url, currency_unit, Arc::new(wallet_db), &seed, None)?;
 
+        // Fetch model pricing information
+        let (prompt_cost, completion_cost, max_context) = match tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current().block_on(Self::get_models_info(&host, &wallet))
+        }) {
+            Ok(models_response) => {
+                // Find the pricing for the current model
+                if let Some(model_info) = models_response
+                    .data
+                    .iter()
+                    .find(|m| m.id == model.model_name)
+                {
+                    println!(
+                        "Found pricing for model {}: prompt=${}, completion=${}",
+                        model.model_name, model_info.pricing.prompt, model_info.pricing.completion
+                    );
+                    (
+                        Some(model_info.pricing.prompt),
+                        Some(model_info.pricing.completion),
+                        Some(model_info.context_length),
+                    )
+                } else {
+                    tracing::warn!(
+                        "No pricing found for model {}, using defaults",
+                        model.model_name
+                    );
+                    (None, None, None)
+                }
+            }
+            Err(e) => {
+                eprintln!("Failed to fetch model pricing, using defaults: {}", e);
+                (None, None, None)
+            }
+        };
+
+        let mut model = model;
+
+        if let Some(max_con) = max_context {
+            model.context_limit = Some(max_con as usize);
+        }
+
         let provider = Self {
             client: Arc::new(client),
             host,
             model,
             wallet: Arc::new(wallet),
+            prompt_cost,
+            completion_cost,
         };
 
         Ok(provider)
@@ -138,15 +224,13 @@ impl RoutstrProvider {
         Ok(())
     }
 
-    async fn get_auth_token(&self) -> Result<String, ProviderError> {
+    async fn get_auth_token(&self, amount: u64) -> Result<String, ProviderError> {
         // Check balance before attempting to generate a token
-        self.ensure_wallet_balance().await?;
 
         // Generate payment token using CDK wallet
         let prepare_send = self
             .wallet
-            // TODO: Get a real amount
-            .prepare_send(50.into(), SendOptions::default())
+            .prepare_send(amount.into(), SendOptions::default())
             .await
             .map_err(|e| ProviderError::Authentication(format!("Failed to prepare payment: {e}")))
             .unwrap();
@@ -161,15 +245,37 @@ impl RoutstrProvider {
         Ok(token)
     }
 
-    async fn post(&self, payload: Value) -> Result<Value, ProviderError> {
+    async fn post(&self, payload: Value, input_token_count: usize) -> Result<Value, ProviderError> {
         let base_url = url::Url::parse(&self.host)
             .map_err(|e| ProviderError::RequestFailed(format!("Invalid base URL: {e}")))?;
         let url = base_url.join("v1/chat/completions").map_err(|e| {
             ProviderError::RequestFailed(format!("Failed to construct endpoint URL: {e}"))
         })?;
 
+        let wallet_balance = self.wallet.total_balance().await.unwrap();
+
+        let input_cost = self.prompt_cost.map(|a| a * input_token_count as f64);
+
+        let max_output_tokens = self.model.context_limit.map(|a| a - input_token_count);
+
+        let max_output_cost =
+            max_output_tokens.and_then(|a| self.completion_cost.map(|c| a as f64 * c));
+
+        let max_total_cost =
+            max_output_cost.and_then(|a| input_cost.map(|c| (c.ceil() + a.ceil()) as u64));
+
+        let amount = if let Some(max_total_cost) = max_total_cost {
+            if Amount::from(max_total_cost) >= wallet_balance {
+                u64::from(wallet_balance)
+            } else {
+                max_total_cost
+            }
+        } else {
+            u64::from(wallet_balance)
+        };
+
         // This will check balance and get token (get_auth_token includes balance check)
-        let auth_token = self.get_auth_token().await?;
+        let auth_token = self.get_auth_token(amount).await?;
 
         let response = self
             .client
@@ -177,17 +283,14 @@ impl RoutstrProvider {
             .header("Authorization", format!("Bearer {auth_token}"))
             .json(&payload)
             .send()
-            .await?;
+            .await;
 
-        // Spawn refund handling in background task
-        let provider = self.clone();
-        tokio::spawn(async move {
-            if let Err(e) = provider.handle_refund(&auth_token).await {
-                tracing::error!("Error handling refund: {}", e);
-            }
-        });
+        if let Err(err) = self.handle_refund(&auth_token).await {
+            tracing::error!("Could not get refund for {}", auth_token);
+            tracing::error!("{}", err);
+        }
 
-        handle_response_openai_compat(response).await
+        handle_response_openai_compat(response?).await
     }
 
     async fn handle_refund(&self, token: &str) -> Result<(), ProviderError> {
@@ -234,6 +337,46 @@ impl RoutstrProvider {
             ProviderError::RequestFailed(format!("Failed to get wallet balance: {e}"))
         })?;
         Ok(balance.into())
+    }
+
+    /// Get models
+    pub async fn get_models_info(
+        host: &str,
+        wallet: &Wallet,
+    ) -> Result<ModelsResponse, ProviderError> {
+        let base_url = url::Url::parse(&host)
+            .map_err(|e| ProviderError::RequestFailed(format!("Invalid base URL: {e}")))?;
+        let url = base_url.join("/v1/models").map_err(|e| {
+            ProviderError::RequestFailed(format!("Failed to construct endpoint URL: {e}"))
+        })?;
+
+        let token = wallet
+            .prepare_send(1.into(), SendOptions::default())
+            .await
+            .map_err(|e| {
+                ProviderError::Authentication(format!("Failed to prepare payment: {e}"))
+            })?;
+
+        let token = wallet
+            .send(token, None)
+            .await
+            .map_err(|e| ProviderError::Authentication(format!("Failed to send payment: {e}")))?;
+
+        let client = Client::builder()
+            .timeout(Duration::from_secs(600))
+            .build()?;
+
+        let response = client
+            .get(url)
+            .header("Authorization", format!("Bearer {token}"))
+            .send()
+            .await?;
+
+        let models_response: ModelsResponse = response.json().await.map_err(|e| {
+            ProviderError::RequestFailed(format!("Failed to parse models response: {e}"))
+        })?;
+
+        Ok(models_response)
     }
 }
 
@@ -287,11 +430,15 @@ impl Provider for RoutstrProvider {
         messages: &[Message],
         tools: &[Tool],
     ) -> Result<(Message, ProviderUsage), ProviderError> {
+        let token_counter = TokenCounter::new(self.model.tokenizer_name());
+
+        let token_count = token_counter.count_everything(system, messages, tools, &[]);
+
         // Create payload without tools since the endpoint doesn't support them
         let payload = create_request(&self.model, system, messages, &[], &ImageFormat::OpenAi)?;
 
         // Make request
-        let response = self.post(payload.clone()).await?;
+        let response = self.post(payload.clone(), token_count).await?;
 
         // Parse response
         let mut message = response_to_message(response.clone())?;
