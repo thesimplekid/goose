@@ -1,7 +1,8 @@
 use anyhow::Result;
 use bip39::Mnemonic;
 use cdk::nuts::CurrencyUnit;
-use cdk::wallet::{ReceiveOptions, Wallet};
+use cdk::wallet::{ReceiveOptions, SendOptions, Wallet};
+use cdk::Amount;
 use cdk_sqlite::WalletSqliteDatabase;
 use home::home_dir;
 use std::fs;
@@ -34,6 +35,52 @@ pub async fn handle_wallet_topup(token: String) -> Result<()> {
         }
         Err(e) => {
             eprintln!("Failed to process token: {}", e);
+            Err(e.into())
+        }
+    }
+}
+
+pub async fn handle_wallet_withdraw(amount: Option<u64>) -> Result<()> {
+    let wallet = initialize_wallet().await?;
+
+    let current_balance = wallet.total_balance().await?;
+    if current_balance == Amount::ZERO {
+        println!("Wallet is empty. Cannot withdraw.");
+        return Ok(());
+    }
+
+    let withdraw_amount = match amount {
+        Some(amt) => {
+            let amt = Amount::from(amt);
+            if amt > current_balance {
+                println!(
+                    "Cannot withdraw {} sats. Current balance is {} sats.",
+                    amt, current_balance
+                );
+                return Ok(());
+            }
+            amt
+        }
+        None => current_balance,
+    };
+
+    let prepared_send = wallet
+        .prepare_send(withdraw_amount, SendOptions::default())
+        .await?;
+
+    match wallet.send(prepared_send, None).await {
+        Ok(token) => {
+            let new_balance = wallet.total_balance().await?;
+            println!(
+                "Successfully created withdrawal token for {} sats",
+                withdraw_amount
+            );
+            println!("Token: {}", token);
+            println!("New balance: {} sats", new_balance);
+            Ok(())
+        }
+        Err(e) => {
+            eprintln!("Failed to create withdrawal token: {}", e);
             Err(e.into())
         }
     }

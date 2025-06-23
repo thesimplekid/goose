@@ -42,6 +42,7 @@ use mcp_core::tool::{Tool, ToolCall};
 use mcp_core::Content;
 use reqwest::Client;
 use serde_json::{json, Value};
+use std::sync::Arc;
 use std::time::Duration;
 use uuid::Uuid;
 
@@ -310,11 +311,11 @@ pub fn format_tool_info(tools: &[Tool]) -> String {
 pub struct RoutstrInterpreter {
     client: Client,
     host: String,
-    wallet: Wallet,
+    wallet: Arc<Wallet>,
 }
 
 impl RoutstrInterpreter {
-    pub fn new(wallet: Wallet) -> Result<Self, ProviderError> {
+    pub fn new(wallet: Arc<Wallet>) -> Result<Self, ProviderError> {
         let config = crate::config::Config::global();
         let host = config
             .get_param("ROUTSTR_HOST")

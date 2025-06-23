@@ -33,14 +33,14 @@ pub const ROUTSTR_DOC_URL: &str = "https://routstr.com/docs";
 pub const ROUTSTR_DEFAULT_MINT_URL: &str = "https://mint.minibits.cash/Bitcoin";
 pub const ROUTSTR_DEFAULT_CURRENCY_UNIT: &str = "sat";
 
-#[derive(Debug, serde::Serialize)]
+#[derive(Debug, serde::Serialize, Clone)]
 pub struct RoutstrProvider {
     #[serde(skip)]
-    client: Client,
+    client: Arc<Client>,
     host: String,
     model: ModelConfig,
     #[serde(skip)]
-    wallet: Wallet,
+    wallet: Arc<Wallet>,
 }
 
 impl Default for RoutstrProvider {
@@ -110,10 +110,10 @@ impl RoutstrProvider {
         let wallet = Wallet::new(&mint_url, currency_unit, Arc::new(wallet_db), &seed, None)?;
 
         let provider = Self {
-            client,
+            client: Arc::new(client),
             host,
             model,
-            wallet,
+            wallet: Arc::new(wallet),
         };
 
         Ok(provider)
@@ -179,11 +179,17 @@ impl RoutstrProvider {
             .send()
             .await?;
 
-        // self.handle_refund(&auth_token).await?;
+        // Spawn refund handling in background task
+        let provider = self.clone();
+        tokio::spawn(async move {
+            if let Err(e) = provider.handle_refund(&auth_token).await {
+                tracing::error!("Error handling refund: {}", e);
+            }
+        });
+
         handle_response_openai_compat(response).await
     }
 
-    // REVIEW: I'm not really sure how this refund thing works
     async fn handle_refund(&self, token: &str) -> Result<(), ProviderError> {
         let base_url = url::Url::parse(&self.host)
             .map_err(|e| ProviderError::RequestFailed(format!("Invalid base URL: {e}")))?;
@@ -198,8 +204,26 @@ impl RoutstrProvider {
             .send()
             .await?;
 
-        println!("{:?}", response);
-        println!("{:?}", response.text().await?);
+        let response: Value = response.json().await?;
+
+        if let Some(token) = response.get("token") {
+            match self
+                .wallet
+                .receive(
+                    &token.to_string().trim_matches('"'),
+                    cdk::wallet::ReceiveOptions::default(),
+                )
+                .await
+            {
+                Ok(amount) => {
+                    tracing::debug!("Claimed change from mint: {} sats.", amount);
+                }
+                Err(e) => {
+                    tracing::error!("Failed to claim change: {}", e);
+                    tracing::error!("{}", token);
+                }
+            }
+        }
 
         Ok(())
     }
