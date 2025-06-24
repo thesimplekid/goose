@@ -10,9 +10,12 @@ use super::base::{ConfigKey, Provider, ProviderMetadata, ProviderUsage, Usage};
 use super::errors::ProviderError;
 use super::formats::openai::{create_request, get_usage, response_to_message};
 use super::toolshim::{augment_message_with_tool_calls, RoutstrInterpreter};
-use super::utils::{emit_debug_trace, get_model, handle_response_openai_compat, ImageFormat};
 use crate::message::Message;
 use crate::model::ModelConfig;
+use crate::providers::utils::{
+    emit_debug_trace, get_model, handle_provider_response, is_anthropic_model,
+    update_request_for_anthropic, ImageFormat, ProviderResponseType,
+};
 use mcp_core::tool::Tool;
 
 pub const ROUTSTR_HOST: &str = "https://api.routstr.com";
@@ -121,9 +124,9 @@ impl RoutstrProvider {
             .header("Authorization", format!("Bearer {auth_token}"))
             .json(&payload)
             .send()
-            .await;
+            .await?;
 
-        handle_response_openai_compat(response?).await
+        handle_provider_response(response, ProviderResponseType::OpenAI).await
     }
 
     /// Get models
@@ -189,8 +192,13 @@ impl Provider for RoutstrProvider {
         messages: &[Message],
         tools: &[Tool],
     ) -> Result<(Message, ProviderUsage), ProviderError> {
-        // Create payload without tools since the endpoint doesn't support them
-        let payload = create_request(&self.model, system, messages, &[], &ImageFormat::OpenAi)?;
+        // Create base request
+        let mut payload = create_request(&self.model, system, messages, &[], &ImageFormat::OpenAi)?;
+
+        // Apply anthropic-specific modifications if needed
+        if is_anthropic_model(&self.model.model_name) {
+            payload = update_request_for_anthropic(&payload);
+        }
 
         // Make request
         let response = self.post(payload.clone()).await?;
@@ -226,9 +234,11 @@ impl Provider for RoutstrProvider {
     }
 
     async fn fetch_supported_models_async(&self) -> Result<Option<Vec<String>>, ProviderError> {
-        let models = self.get_models_info().await?;
-        let model_ids = models.data.into_iter().map(|m| m.id.clone()).collect();
-
-        Ok(Some(model_ids))
+        if let Ok(models) = self.get_models_info().await {
+            let model_ids = models.data.into_iter().map(|m| m.id.clone()).collect();
+            Ok(Some(model_ids))
+        } else {
+            Ok(None)
+        }
     }
 }
