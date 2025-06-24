@@ -37,12 +37,10 @@ use crate::message::{Message, MessageContent};
 use crate::model::ModelConfig;
 use crate::providers::formats::openai::create_request;
 use anyhow::Result;
-use cdk::wallet::Wallet;
 use mcp_core::tool::{Tool, ToolCall};
 use mcp_core::Content;
 use reqwest::Client;
 use serde_json::{json, Value};
-use std::sync::Arc;
 use std::time::Duration;
 use uuid::Uuid;
 
@@ -311,11 +309,11 @@ pub fn format_tool_info(tools: &[Tool]) -> String {
 pub struct RoutstrInterpreter {
     client: Client,
     host: String,
-    wallet: Arc<Wallet>,
+    api_key: String,
 }
 
 impl RoutstrInterpreter {
-    pub fn new(wallet: Arc<Wallet>) -> Result<Self, ProviderError> {
+    pub fn new(api_key: String) -> Result<Self, ProviderError> {
         let config = crate::config::Config::global();
         let host = config
             .get_param("ROUTSTR_HOST")
@@ -329,28 +327,8 @@ impl RoutstrInterpreter {
         Ok(Self {
             client,
             host,
-            wallet,
+            api_key,
         })
-    }
-
-    async fn get_auth_token(&self) -> Result<String, ProviderError> {
-        let wallet = &self.wallet;
-
-        // Generate payment token using CDK wallet
-        let prepare_send = wallet
-            .prepare_send(50.into(), cdk::wallet::SendOptions::default())
-            .await
-            .map_err(|e| {
-                ProviderError::Authentication(format!("Failed to prepare payment: {}", e))
-            })?;
-
-        let token = wallet
-            .send(prepare_send, None)
-            .await
-            .map_err(|e| ProviderError::Authentication(format!("Failed to send payment: {}", e)))?
-            .to_v3_string();
-
-        Ok(token)
     }
 
     fn tool_structured_ouput_format_schema() -> Value {
@@ -403,12 +381,10 @@ impl RoutstrInterpreter {
 
         payload["format"] = format_schema;
 
-        let auth_token = self.get_auth_token().await?;
-
         let response = self
             .client
             .post(&url)
-            .header("Authorization", format!("Bearer {}", auth_token))
+            .header("Authorization", format!("Bearer {}", self.api_key))
             .json(&payload)
             .send()
             .await?;

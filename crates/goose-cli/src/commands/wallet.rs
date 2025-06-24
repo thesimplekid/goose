@@ -1,95 +1,162 @@
 use anyhow::Result;
 use bip39::Mnemonic;
 use cdk::nuts::CurrencyUnit;
-use cdk::wallet::{ReceiveOptions, SendOptions, Wallet};
+use cdk::wallet::{SendOptions, Wallet};
 use cdk::Amount;
 use cdk_sqlite::WalletSqliteDatabase;
+use goose::config::Config;
 use home::home_dir;
+use reqwest::Client;
+use serde_json::Value;
 use std::fs;
 use std::str::FromStr;
 use std::sync::Arc;
+use std::time::Duration;
 
 const DEFAULT_MINT_URL: &str = "https://mint.minibits.cash/Bitcoin";
 
 pub async fn handle_wallet_balance() -> Result<()> {
     let wallet = initialize_wallet().await?;
+
+    if let Some(current_token) = get_current_token().ok() {
+        handle_refund(&current_token, &wallet).await?;
+    }
+
     let balance = wallet.total_balance().await?;
-    println!("Current wallet balance: {} sats", balance);
+
+    println!("sats: {}", balance);
+
+    let prep_send = wallet.prepare_send(balance, SendOptions::default()).await?;
+
+    let send = wallet.send(prep_send, None).await?;
+
+    set_current_token(send.to_string())?;
+
     Ok(())
 }
 
-pub async fn handle_wallet_topup(token: String) -> Result<()> {
+fn get_current_token() -> Result<String> {
+    let config = Config::global();
+
+    Ok(config.get_secret("ROUTSTR_API_KEY")?)
+}
+
+fn set_current_token(token: String) -> Result<()> {
+    let config = Config::global();
+
+    config.set_secret("ROUTSTR_API_KEY", Value::String(token))?;
+
+    Ok(())
+}
+
+async fn handle_refund(current_token: &str, wallet: &Wallet) -> Result<()> {
+    let config = Config::global();
+
+    let host: String = config.get_param("ROUTSTR_HOST")?;
+
+    let base_url = url::Url::parse(&host)?;
+    let url = base_url.join("/v1/wallet/refund")?;
+
+    let client = Client::builder()
+        .timeout(Duration::from_secs(600))
+        .build()?;
+
+    let response = client
+        .post(url)
+        .header("Authorization", format!("Bearer {current_token}"))
+        .send()
+        .await?;
+
+    let response: Value = response.json().await?;
+
+    if let Some(token) = response.get("token") {
+        match wallet
+            .receive(
+                &token.to_string().trim_matches('"'),
+                cdk::wallet::ReceiveOptions::default(),
+            )
+            .await
+        {
+            Ok(amount) => {
+                tracing::debug!("Claimed change from mint: {} sats.", amount);
+            }
+            Err(e) => {
+                tracing::error!("Failed to claim change: {}", e);
+                tracing::error!("{}", token);
+            }
+        }
+    }
+
+    Ok(())
+}
+
+pub async fn handle_wallet_topup(top_up_token: String) -> Result<()> {
     let wallet = initialize_wallet().await?;
 
-    if token.trim().is_empty() {
+    if top_up_token.trim().is_empty() {
         println!("No token provided. Operation cancelled.");
         return Ok(());
     }
 
-    match wallet.receive(&token, ReceiveOptions::default()).await {
-        Ok(_) => {
-            let new_balance = wallet.total_balance().await?;
-            println!("Successfully topped up wallet!");
-            println!("New balance: {} sats", new_balance);
-            Ok(())
+    let config = Config::global();
+
+    if let Some(current_token) = get_current_token().ok() {
+        handle_refund(&current_token, &wallet).await?;
+    }
+
+    match wallet
+        .receive(
+            &top_up_token.to_string().trim_matches('"'),
+            cdk::wallet::ReceiveOptions::default(),
+        )
+        .await
+    {
+        Ok(amount) => {
+            tracing::debug!("Claimed change from mint: {} sats.", amount);
         }
         Err(e) => {
-            eprintln!("Failed to process token: {}", e);
-            Err(e.into())
+            tracing::error!("Failed to claim change: {}", e);
+            tracing::error!("{}", top_up_token);
         }
     }
+
+    let balance = wallet.total_balance().await?;
+
+    let prep_send = wallet.prepare_send(balance, SendOptions::default()).await?;
+
+    let token = wallet.send(prep_send, None).await?;
+
+    config.set_secret("ROUTSTR_API_KEY", Value::String(token.to_string()))?;
+
+    Ok(())
 }
 
 pub async fn handle_wallet_withdraw(amount: Option<u64>) -> Result<()> {
     let wallet = initialize_wallet().await?;
 
-    let current_balance = wallet.total_balance().await?;
-    if current_balance == Amount::ZERO {
-        println!("Wallet is empty. Cannot withdraw.");
-        return Ok(());
+    if let Some(current_token) = get_current_token().ok() {
+        handle_refund(&current_token, &wallet).await?;
     }
 
-    let withdraw_amount = match amount {
-        Some(amt) => {
-            let amt = Amount::from(amt);
-            if amt > current_balance {
-                println!(
-                    "Cannot withdraw {} sats. Current balance is {} sats.",
-                    amt, current_balance
-                );
-                return Ok(());
-            }
-            amt
-        }
-        None => current_balance,
-    };
+    let balance = wallet.total_balance().await?;
 
-    let prepared_send = wallet
-        .prepare_send(withdraw_amount, SendOptions::default())
-        .await?;
+    let amount = amount.map(Amount::from);
 
-    match wallet.send(prepared_send, None).await {
-        Ok(token) => {
-            let new_balance = wallet.total_balance().await?;
-            println!(
-                "Successfully created withdrawal token for {} sats",
-                withdraw_amount
-            );
-            println!("Token: {}", token);
-            println!("New balance: {} sats", new_balance);
-            Ok(())
-        }
-        Err(e) => {
-            eprintln!("Failed to create withdrawal token: {}", e);
-            Err(e.into())
-        }
-    }
+    let amount = amount.unwrap_or(balance);
+
+    let prep_send = wallet.prepare_send(amount, SendOptions::default()).await?;
+
+    let send = wallet.send(prep_send, None).await?;
+
+    println!("{}", send);
+
+    Ok(())
 }
 
 async fn initialize_wallet() -> Result<Wallet> {
-    let work_dir = home_dir().unwrap().join(".cdk-cli");
+    let work_dir = home_dir().unwrap().join(".cdk-gooose");
     fs::create_dir_all(&work_dir)?;
-    let cdk_wallet_path = work_dir.join("cdk-cli.sqlite");
+    let cdk_wallet_path = work_dir.join("cdk-goose.sqlite");
 
     let wallet_db = WalletSqliteDatabase::new(&cdk_wallet_path).await?;
 

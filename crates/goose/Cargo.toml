@@ -63,11 +63,6 @@ rand = "0.8.5"
 utoipa = { version = "4.1", features = ["chrono"] }
 tokio-cron-scheduler = "0.14.0"
 
-cdk = { version = "0.10.0", default-features = false, features = ["wallet"] }
-cdk-sqlite = { version = "0.10.0", default-features = false, features = ["wallet"] }
-home = "0.5.0"
-bip39 = "2.1.0"
-
 # For Bedrock provider
 aws-config = { version = "1.5.16", features = ["behavior-version-latest"] }
 aws-smithy-types = "1.2.13"

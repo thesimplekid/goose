@@ -63,6 +63,7 @@ tokio-stream = "0.1"
 bytes = "1.5"
 http = "1.0"
 webbrowser = "1.0"
+url = "2.5"
 
 indicatif = "0.17.11"
 urlencoding = "2"
