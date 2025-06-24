@@ -116,7 +116,6 @@ fn create_lead_worker_from_env(
 }
 
 fn create_provider(name: &str, model: ModelConfig) -> Result<Arc<dyn Provider>> {
-    println!("name: {}, config: {:?}", name, model);
     // We use Arc instead of Box to be able to clone for multiple async tasks
     match name {
         "openai" => Ok(Arc::new(OpenAiProvider::from_env(model)?)),

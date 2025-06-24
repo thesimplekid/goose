@@ -9,7 +9,6 @@ use std::time::Duration;
 use super::base::{ConfigKey, Provider, ProviderMetadata, ProviderUsage, Usage};
 use super::errors::ProviderError;
 use super::formats::openai::{create_request, get_usage, response_to_message};
-use super::toolshim::{augment_message_with_tool_calls, RoutstrInterpreter};
 use crate::message::Message;
 use crate::model::ModelConfig;
 use crate::providers::utils::{
