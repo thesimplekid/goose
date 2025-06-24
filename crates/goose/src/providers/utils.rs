@@ -25,7 +25,7 @@ pub enum ProviderResponseType {
 /// ### Arguments
 /// - `response`: The HTTP response to process.
 /// - `provider_type`: The type of provider (OpenAI, Google, etc.)
-/// 
+///
 /// ### Returns
 /// - `Ok(Value)`: Parsed JSON on success.
 /// - `Err(ProviderError)`: Describes the failure reason.
@@ -87,7 +87,7 @@ pub async fn handle_response_openai_compat(response: Response) -> Result<Value, 
             Err(ProviderError::Authentication(format!("Authentication failed. Please ensure your API keys are valid and have the required permissions. \
                 Status: {}. Response: {:?}", status, payload)))
         }
-        StatusCode::BAD_REQUEST | StatusCode::NOT_FOUND => {
+        StatusCode::BAD_REQUEST | StatusCode::NOT_FOUND | StatusCode::PAYLOAD_TOO_LARGE => {
             tracing::debug!(
                 "{}", format!("Provider request failed with status: {}. Payload: {:?}", status, payload)
             );
@@ -95,6 +95,9 @@ pub async fn handle_response_openai_compat(response: Response) -> Result<Value, 
                 let err = err_resp.error;
                 if err.is_context_length_exceeded() {
                     return Err(ProviderError::ContextLengthExceeded(err.message.unwrap_or("Unknown error".to_string())));
+                }
+                if let Some(required_sats) = err.get_insufficient_balance() {
+                    return Err(ProviderError::InsufficientBalance(required_sats));
                 }
                 return Err(ProviderError::RequestFailed(format!("{} (status {})", err, status.as_u16())));
             }
@@ -352,7 +355,7 @@ pub fn is_anthropic_model(model_name: &str) -> bool {
 
 /// Update the request when using Anthropic model by adding caching controls.
 /// For Anthropic models, we enable prompt caching to save cost. Since we're using
-/// OpenAI compatible endpoints, we need to modify the OpenAI request to have 
+/// OpenAI compatible endpoints, we need to modify the OpenAI request to have
 /// Anthropic cache control fields.
 pub fn update_request_for_anthropic(original_payload: &Value) -> Value {
     let mut payload = original_payload.clone();

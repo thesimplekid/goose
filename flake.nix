@@ -32,6 +32,8 @@
             nodePackages.typescript
             nodePackages.typescript-language-server
             protobuf
+            gcc
+            xorg.libxcb
           ];
 
           RUST_SRC_PATH = "${rustNightly}/lib/rustlib/src/rust/library";

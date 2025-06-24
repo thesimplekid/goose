@@ -66,6 +66,7 @@ impl OpenRouterProvider {
     }
 
     async fn post(&self, payload: Value) -> Result<Value, ProviderError> {
+        println!("{payload}");
         let base_url = Url::parse(&self.host)
             .map_err(|e| ProviderError::RequestFailed(format!("Invalid base URL: {e}")))?;
         let url = base_url.join("api/v1/chat/completions").map_err(|e| {

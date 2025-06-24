@@ -109,6 +109,7 @@ impl RoutstrProvider {
     }
 
     async fn post(&self, payload: Value) -> Result<Value, ProviderError> {
+        println!("{}", payload);
         let base_url = url::Url::parse(&self.host)
             .map_err(|e| ProviderError::RequestFailed(format!("Invalid base URL: {e}")))?;
         let url = base_url.join("v1/chat/completions").map_err(|e| {
@@ -192,8 +193,9 @@ impl Provider for RoutstrProvider {
         messages: &[Message],
         tools: &[Tool],
     ) -> Result<(Message, ProviderUsage), ProviderError> {
-        // Create base request
-        let mut payload = create_request(&self.model, system, messages, &[], &ImageFormat::OpenAi)?;
+        // Create request with provided tools
+        let mut payload =
+            create_request(&self.model, system, messages, tools, &ImageFormat::OpenAi)?;
 
         // Apply anthropic-specific modifications if needed
         if is_anthropic_model(&self.model.model_name) {
@@ -204,17 +206,7 @@ impl Provider for RoutstrProvider {
         let response = self.post(payload.clone()).await?;
 
         // Parse response
-        let mut message = response_to_message(response.clone())?;
-
-        // If tools are provided, augment the message with tool calls using the tool shim
-        if !tools.is_empty() {
-            message = augment_message_with_tool_calls(
-                &RoutstrInterpreter::new(self.api_key.clone())?,
-                message,
-                tools,
-            )
-            .await?;
-        }
+        let message = response_to_message(response.clone())?;
 
         let usage = match get_usage(&response) {
             Ok(usage) => usage,
