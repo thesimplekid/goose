@@ -424,6 +424,7 @@ pub async fn configure_provider_dialog() -> Result<bool, Box<dyn Error>> {
         }
         Err(e) => {
             spin.stop(style(e.to_string()).red());
+            println!("{:?}", e);
             cliclack::outro(style("Failed to configure provider: init chat completion request with tool did not succeed.").on_red().white())?;
             Ok(false)
         }

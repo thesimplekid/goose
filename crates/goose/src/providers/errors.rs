@@ -23,6 +23,9 @@ pub enum ProviderError {
 
     #[error("Usage data error: {0}")]
     UsageError(String),
+
+    #[error("Insufficient balance: {0} sats required. Please top up your balance to continue.")]
+    InsufficientBalance(f64),
 }
 
 impl From<anyhow::Error> for ProviderError {
@@ -146,6 +149,22 @@ impl OpenAIError {
         } else {
             false
         }
+    }
+
+    pub fn get_insufficient_balance(&self) -> Option<f64> {
+        if let Some(code) = &self.code {
+            if code == "insufficient_balance" {
+                if let Some(message) = &self.message {
+                    if let Some(sats_str) = message
+                        .split_whitespace()
+                        .find(|word| word.parse::<f64>().is_ok())
+                    {
+                        return sats_str.parse::<f64>().ok();
+                    }
+                }
+            }
+        }
+        None
     }
 }
 

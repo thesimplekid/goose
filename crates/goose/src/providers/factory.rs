@@ -14,6 +14,7 @@ use super::{
     ollama::OllamaProvider,
     openai::OpenAiProvider,
     openrouter::OpenRouterProvider,
+    routstr::RoutstrProvider,
     sagemaker_tgi::SageMakerTgiProvider,
     snowflake::SnowflakeProvider,
     venice::VeniceProvider,
@@ -50,6 +51,7 @@ pub fn providers() -> Vec<ProviderMetadata> {
         OllamaProvider::metadata(),
         OpenAiProvider::metadata(),
         OpenRouterProvider::metadata(),
+        RoutstrProvider::metadata(),
         SageMakerTgiProvider::metadata(),
         VeniceProvider::metadata(),
         SnowflakeProvider::metadata(),
@@ -131,6 +133,7 @@ fn create_provider(name: &str, model: ModelConfig) -> Result<Arc<dyn Provider>> 
         "snowflake" => Ok(Arc::new(SnowflakeProvider::from_env(model)?)),
         "github_copilot" => Ok(Arc::new(GithubCopilotProvider::from_env(model)?)),
         "xai" => Ok(Arc::new(XaiProvider::from_env(model)?)),
+        "routstr" => Ok(Arc::new(RoutstrProvider::from_env(model)?)),
         _ => Err(anyhow::anyhow!("Unknown provider: {}", name)),
     }
 }

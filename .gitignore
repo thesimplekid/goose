@@ -55,3 +55,5 @@ do_not_version/
 /temporal.db
 /ui/desktop/src/bin/goose-scheduler-executor
 /ui/desktop/src/bin/goose
+
+.pre-commit-config.yaml
