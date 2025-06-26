@@ -1,6 +1,7 @@
 use anyhow::Result;
 use bip39::Mnemonic;
 use cdk::nuts::CurrencyUnit;
+use cdk::nuts::Token;
 use cdk::wallet::{SendOptions, Wallet};
 use cdk::Amount;
 use cdk_sqlite::WalletSqliteDatabase;
@@ -26,11 +27,11 @@ pub async fn handle_wallet_balance() -> Result<()> {
 
     println!("sats: {}", balance);
 
-    let prep_send = wallet.prepare_send(balance, SendOptions::default()).await?;
+    let pre_swap = wallet.swap_from_unspent(balance, None, false).await?;
 
-    let send = wallet.send(prep_send, None).await?;
+    let token = Token::new(wallet.mint_url, pre_swap, None, wallet.unit);
 
-    set_current_token(send.to_string())?;
+    set_current_token(token.to_string())?;
 
     Ok(())
 }
@@ -38,14 +39,24 @@ pub async fn handle_wallet_balance() -> Result<()> {
 fn get_current_token() -> Result<String> {
     let config = Config::global();
 
-    Ok(config.get_secret("ROUTSTR_API_KEY")?)
+    Ok(config
+        .get_param::<String>("ROUTSTR_API_KEY")?
+        .to_string()
+        .trim()
+        .to_string())
 }
 
 fn set_current_token(token: String) -> Result<()> {
     let config = Config::global();
 
-    config.set_secret("ROUTSTR_API_KEY", Value::String(token))?;
+    config.set_param("ROUTSTR_API_KEY", Value::String(token.trim().to_string()))?;
 
+    Ok(())
+}
+
+fn clear_current_token() -> Result<()> {
+    let config = Config::global();
+    config.delete("ROUTSTR_API_KEY")?;
     Ok(())
 }
 
@@ -85,6 +96,7 @@ async fn handle_refund(current_token: &str, wallet: &Wallet) -> Result<()> {
                 tracing::error!("{}", token);
             }
         }
+        clear_current_token()?;
     }
 
     Ok(())
@@ -97,8 +109,6 @@ pub async fn handle_wallet_topup(top_up_token: String) -> Result<()> {
         println!("No token provided. Operation cancelled.");
         return Ok(());
     }
-
-    let config = Config::global();
 
     if let Some(current_token) = get_current_token().ok() {
         handle_refund(&current_token, &wallet).await?;
@@ -122,11 +132,11 @@ pub async fn handle_wallet_topup(top_up_token: String) -> Result<()> {
 
     let balance = wallet.total_balance().await?;
 
-    let prep_send = wallet.prepare_send(balance, SendOptions::default()).await?;
+    let pre_swap = wallet.swap_from_unspent(balance, None, false).await?;
 
-    let token = wallet.send(prep_send, None).await?;
+    let token = Token::new(wallet.mint_url, pre_swap, None, wallet.unit);
 
-    config.set_secret("ROUTSTR_API_KEY", Value::String(token.to_string()))?;
+    set_current_token(token.to_string())?;
 
     Ok(())
 }
@@ -135,20 +145,25 @@ pub async fn handle_wallet_withdraw(amount: Option<u64>) -> Result<()> {
     let wallet = initialize_wallet().await?;
 
     if let Some(current_token) = get_current_token().ok() {
+        println!("{}", current_token);
         handle_refund(&current_token, &wallet).await?;
     }
 
     let balance = wallet.total_balance().await?;
 
-    let amount = amount.map(Amount::from);
+    if balance > Amount::ZERO {
+        let amount = amount.map(Amount::from);
 
-    let amount = amount.unwrap_or(balance);
+        let amount = amount.unwrap_or(balance);
 
-    let prep_send = wallet.prepare_send(amount, SendOptions::default()).await?;
+        let prep_send = wallet.prepare_send(amount, SendOptions::default()).await?;
 
-    let send = wallet.send(prep_send, None).await?;
+        let send = wallet.send(prep_send, None).await?;
 
-    println!("{}", send);
+        println!("{}", send);
+    } else {
+        println!("Wallet is empty.");
+    }
 
     Ok(())
 }

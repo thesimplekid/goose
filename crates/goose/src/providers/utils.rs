@@ -81,6 +81,8 @@ pub async fn handle_response_openai_compat(response: Response) -> Result<Value, 
         Err(e) => return Err(ProviderError::RequestFailed(e.to_string())),
     };
 
+    println!("response payload: {}", payload);
+
     match status {
         StatusCode::OK => Ok(payload),
         StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => {

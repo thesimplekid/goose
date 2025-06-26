@@ -18,7 +18,8 @@ use crate::providers::utils::{
 use mcp_core::tool::Tool;
 
 pub const ROUTSTR_HOST: &str = "https://api.routstr.com";
-pub const ROUTSTR_DEFAULT_MODEL: &str = "meta-llama/llama-3.2-1b-instruct";
+pub const ROUTSTR_DEFAULT_MODEL: &str = "anthropic/claude-sonnet-4";
+
 pub const ROUTSTR_KNOWN_MODELS: &[&str] = &[
     "meta-llama/llama-3.2-1b-instruct",
     "deepseek/deepseek-r1-0528-qwen3-8b",
@@ -95,7 +96,7 @@ impl RoutstrProvider {
             .timeout(Duration::from_secs(600))
             .build()?;
 
-        let current_token: String = config.get_secret("ROUTSTR_API_KEY")?;
+        let current_token: String = config.get_param("ROUTSTR_API_KEY")?;
 
         let provider = Self {
             client: Arc::new(client),
@@ -108,15 +109,13 @@ impl RoutstrProvider {
     }
 
     async fn post(&self, payload: Value) -> Result<Value, ProviderError> {
-        println!("{}", payload);
         let base_url = url::Url::parse(&self.host)
             .map_err(|e| ProviderError::RequestFailed(format!("Invalid base URL: {e}")))?;
         let url = base_url.join("v1/chat/completions").map_err(|e| {
             ProviderError::RequestFailed(format!("Failed to construct endpoint URL: {e}"))
         })?;
 
-        // This will check balance and get token (get_auth_token includes balance check)
-        let auth_token = &self.api_key;
+        let auth_token = &self.api_key.trim();
 
         let response = self
             .client
