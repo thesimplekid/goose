@@ -208,6 +208,35 @@
           "returns": "Provider",
           "throws": "GooseError",
           "isAsync": false
+        },
+        {
+          "name": "typesafe_client",
+          "docs": "Create a Jev client. The optional base URL is an origin or proxy prefix,\noptionally ending in `/v1`. The API key is supplied explicitly by the caller.",
+          "params": [
+            {
+              "name": "api_key",
+              "type": "String",
+              "default": null,
+              "docs": ""
+            },
+            {
+              "name": "base_url",
+              "type": "Option<String>",
+              "default": "None",
+              "docs": ""
+            }
+          ],
+          "returns": "TypeSafeClient",
+          "throws": "GooseError",
+          "isAsync": false
+        },
+        {
+          "name": "typesafe_default_model",
+          "docs": "",
+          "params": [],
+          "returns": "String",
+          "throws": null,
+          "isAsync": false
         }
       ],
       "items": [
@@ -895,6 +924,207 @@
           ],
           "variants": [],
           "methods": []
+        },
+        {
+          "name": "TypeSafeQuestion",
+          "kind": "enum",
+          "docs": "A typed Jev question. Instructions are plain text; state may be structured JSON.",
+          "fields": [],
+          "variants": [
+            {
+              "name": "Noul",
+              "fields": [
+                {
+                  "name": "instructions",
+                  "type": "String",
+                  "default": null,
+                  "docs": ""
+                },
+                {
+                  "name": "criteria",
+                  "type": "HashMap<String, String>",
+                  "default": null,
+                  "docs": ""
+                }
+              ]
+            },
+            {
+              "name": "Choice",
+              "fields": [
+                {
+                  "name": "instructions",
+                  "type": "String",
+                  "default": null,
+                  "docs": ""
+                },
+                {
+                  "name": "criteria",
+                  "type": "HashMap<String, Option<String>>",
+                  "default": null,
+                  "docs": ""
+                }
+              ]
+            },
+            {
+              "name": "Score",
+              "fields": [
+                {
+                  "name": "instructions",
+                  "type": "String",
+                  "default": null,
+                  "docs": ""
+                },
+                {
+                  "name": "criteria",
+                  "type": "Vec<String>",
+                  "default": null,
+                  "docs": ""
+                }
+              ]
+            }
+          ],
+          "methods": []
+        },
+        {
+          "name": "TypeSafeAnswer",
+          "kind": "enum",
+          "docs": "",
+          "fields": [],
+          "variants": [
+            {
+              "name": "Noul",
+              "fields": [
+                {
+                  "name": "noul",
+                  "type": "f64",
+                  "default": null,
+                  "docs": ""
+                }
+              ]
+            },
+            {
+              "name": "Choice",
+              "fields": [
+                {
+                  "name": "choice",
+                  "type": "String",
+                  "default": null,
+                  "docs": ""
+                },
+                {
+                  "name": "probabilities",
+                  "type": "HashMap<String, f64>",
+                  "default": null,
+                  "docs": ""
+                },
+                {
+                  "name": "confidence",
+                  "type": "f64",
+                  "default": null,
+                  "docs": ""
+                }
+              ]
+            },
+            {
+              "name": "Score",
+              "fields": [
+                {
+                  "name": "score",
+                  "type": "f64",
+                  "default": null,
+                  "docs": ""
+                },
+                {
+                  "name": "/// Plain text descriptions are unchanged; structured or null descriptions are JSON.\n        legend",
+                  "type": "HashMap<String, String>",
+                  "default": null,
+                  "docs": ""
+                },
+                {
+                  "name": "probabilities",
+                  "type": "HashMap<String, f64>",
+                  "default": null,
+                  "docs": ""
+                },
+                {
+                  "name": "confidence",
+                  "type": "f64",
+                  "default": null,
+                  "docs": ""
+                }
+              ]
+            }
+          ],
+          "methods": []
+        },
+        {
+          "name": "TypeSafeEvaluation",
+          "kind": "record",
+          "docs": "",
+          "fields": [
+            {
+              "name": "model",
+              "type": "String",
+              "default": null,
+              "docs": ""
+            },
+            {
+              "name": "answers",
+              "type": "HashMap<String, TypeSafeAnswer>",
+              "default": null,
+              "docs": ""
+            },
+            {
+              "name": "input_tokens",
+              "type": "u64",
+              "default": null,
+              "docs": ""
+            },
+            {
+              "name": "output_tokens",
+              "type": "u64",
+              "default": null,
+              "docs": ""
+            }
+          ],
+          "variants": [],
+          "methods": []
+        },
+        {
+          "name": "TypeSafeClient",
+          "kind": "object",
+          "docs": "Jev evaluation client, separate from the conversational Provider API.",
+          "fields": [],
+          "variants": [],
+          "methods": [
+            {
+              "name": "evaluate",
+              "docs": "`state_json` must encode null, a string, object, or array.",
+              "params": [
+                {
+                  "name": "model",
+                  "type": "String",
+                  "default": null,
+                  "docs": ""
+                },
+                {
+                  "name": "state_json",
+                  "type": "String",
+                  "default": null,
+                  "docs": ""
+                },
+                {
+                  "name": "questions",
+                  "type": "HashMap<String, TypeSafeQuestion>",
+                  "default": null,
+                  "docs": ""
+                }
+              ],
+              "returns": "TypeSafeEvaluation",
+              "throws": "GooseError",
+              "isAsync": true
+            }
+          ]
         },
         {
           "name": "Feature",

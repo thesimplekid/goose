@@ -17,6 +17,7 @@ activities:
   - Test multi-turn thinking preservation for providers that reject replayed reasoning_content
   - Validate ACP thinking-effort discovery, forwarding, and provider switching
   - Validate GDK observability hook lifecycle events and payload opt-in
+  - Validate GDK TypeSafe/Jev evaluation requests, answers, retries, and cancellation
   - Test error boundaries including nested delegation prevention
   - Generate comprehensive test report
 
@@ -25,7 +26,7 @@ parameters:
     input_type: string
     requirement: optional
     default: "all"
-    description: "Which test phases to run: all, basic, extensions, delegation, reasoning, acp-effort, advanced"
+    description: "Which test phases to run: all, basic, extensions, delegation, reasoning, acp-effort, typesafe, advanced"
 
   - key: test_depth
     input_type: string
@@ -424,6 +425,19 @@ prompt: |
      managed providers preserve values they support.
 
   Log results to: {{ workspace_dir }}/phase3d_acp_effort.md
+  {% endif %}
+
+  {% if test_phases == "all" or "typesafe" in test_phases or "advanced" in test_phases %}
+  ## GDK TypeSafe/Jev Evaluation Testing
+
+  1. Run `cargo test -p goose-sdk --features typesafe --test typesafe` for the standalone Rust client.
+  2. Run `cargo test -p goose-sdk --features uniffi --test typesafe` to include the language-binding adapter.
+  3. Verify the mock suite covers Noul, Choice, and Score requests, structured state, bearer authentication, proxy paths, and preservation of probabilities, confidence, model ID, and usage.
+  4. Verify 408/429/5xx, connection, timeout, and interrupted-body retries are bounded; 401/422 failures are not retried. Check null and structured criteria, model discovery, response metadata, typed errors, request overrides, environment fallback, and cancellation.
+  5. If `TYPESAFE_API_KEY` is supplied for live testing, run `cargo run -p goose-sdk --features typesafe --example typesafe`. Otherwise record the live check as skipped. Never print the key.
+  6. Run `python3 documentation/automation/gdk-api/generate.py --check` to verify the generated API reference is current.
+
+  Log results to: {{ workspace_dir }}/typesafe.md
   {% endif %}
 
   {% if test_phases == "all" or "advanced" in test_phases %}

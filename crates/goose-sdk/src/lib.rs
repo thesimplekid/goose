@@ -9,8 +9,14 @@
 //! [uniffi-rs](https://github.com/mozilla/uniffi-rs). The current uniffi surface
 //! lets callers construct declarative providers from JSON and stream provider
 //! completions.
+//!
+//! With `--features typesafe` this crate also provides typed Jev evaluation
+//! through `typesafe::TypeSafeClient`. This feature is included in `uniffi`.
 
 pub use goose_sdk_types::{custom_notifications, custom_requests};
+
+#[cfg(feature = "typesafe")]
+pub mod typesafe;
 
 #[cfg(feature = "uniffi")]
 uniffi::setup_scaffolding!("goose");

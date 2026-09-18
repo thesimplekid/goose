@@ -17,9 +17,14 @@ name = "goose-uniffi-bindgen"
 path = "src/bin/uniffi-bindgen.rs"
 required-features = ["uniffi"]
 
+[[example]]
+name = "typesafe"
+required-features = ["typesafe"]
+
 [features]
 default = []
 uniffi = [
+    "typesafe",
     "dep:uniffi",
     "dep:goose-context-management",
     "dep:thiserror",
@@ -31,6 +36,7 @@ uniffi = [
     "dep:rmcp",
     "dep:base64",
 ]
+typesafe = ["dep:anyhow", "dep:reqwest", "dep:serde", "dep:serde_json", "dep:tokio", "dep:thiserror", "dep:httpdate", "dep:rand"]
 
 [dependencies]
 goose-sdk-types = { version = "0.1.0-alpha.9", path = "../goose-sdk-types" }
@@ -43,14 +49,19 @@ goose-providers = { version = "0.1.0-alpha.9", path = "../goose-providers", feat
 goose-context-management = { version = "0.1.0-alpha.9", path = "../goose-context-management", optional = true }
 futures = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }
-tokio = { workspace = true, features = ["rt-multi-thread", "sync"], optional = true }
+tokio = { workspace = true, features = ["rt-multi-thread", "sync", "time"], optional = true }
 anyhow = { workspace = true, optional = true }
 rmcp = { workspace = true, optional = true }
 base64 = { workspace = true, optional = true }
+reqwest = { workspace = true, features = ["json", "rustls"], optional = true }
+serde = { workspace = true, optional = true }
+httpdate = { version = "1.0.3", optional = true }
+rand = { workspace = true, optional = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "process", "io-std", "io-util"] }
 tokio-util = { workspace = true, features = ["compat", "rt"] }
+wiremock.workspace = true
 
 [package.metadata.cargo-machete]
 # Used to provide extras imports for agent-client-protocol

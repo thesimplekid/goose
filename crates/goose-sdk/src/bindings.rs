@@ -652,6 +652,182 @@ pub struct ProviderCompletion {
     pub usage: Option<Usage>,
 }
 
+/// A typed Jev question. Instructions are plain text; state may be structured JSON.
+#[derive(Debug, Clone, uniffi::Enum)]
+pub enum TypeSafeQuestion {
+    Noul {
+        instructions: String,
+        criteria: HashMap<String, String>,
+    },
+    Choice {
+        instructions: String,
+        criteria: HashMap<String, Option<String>>,
+    },
+    Score {
+        instructions: String,
+        criteria: Vec<String>,
+    },
+}
+
+impl From<TypeSafeQuestion> for crate::typesafe::Question {
+    fn from(question: TypeSafeQuestion) -> Self {
+        match question {
+            TypeSafeQuestion::Noul {
+                instructions,
+                criteria,
+            } => Self::Noul {
+                instructions: Value::String(instructions),
+                criteria: criteria
+                    .into_iter()
+                    .map(|(key, value)| (key, Value::String(value)))
+                    .collect(),
+            },
+            TypeSafeQuestion::Choice {
+                instructions,
+                criteria,
+            } => Self::Choice {
+                instructions: Value::String(instructions),
+                criteria: criteria
+                    .into_iter()
+                    .map(|(key, value)| (key, value.map(Value::String).unwrap_or(Value::Null)))
+                    .collect(),
+            },
+            TypeSafeQuestion::Score {
+                instructions,
+                criteria,
+            } => Self::Score {
+                instructions: Value::String(instructions),
+                criteria: criteria.into_iter().map(Value::String).collect(),
+            },
+        }
+    }
+}
+
+#[derive(Debug, Clone, uniffi::Enum)]
+pub enum TypeSafeAnswer {
+    Noul {
+        noul: f64,
+    },
+    Choice {
+        choice: String,
+        probabilities: HashMap<String, f64>,
+        confidence: f64,
+    },
+    Score {
+        score: f64,
+        /// Plain text descriptions are unchanged; structured or null descriptions are JSON.
+        legend: HashMap<String, String>,
+        probabilities: HashMap<String, f64>,
+        confidence: f64,
+    },
+}
+
+impl From<crate::typesafe::Answer> for TypeSafeAnswer {
+    fn from(answer: crate::typesafe::Answer) -> Self {
+        match answer {
+            crate::typesafe::Answer::Noul { noul } => Self::Noul { noul },
+            crate::typesafe::Answer::Choice {
+                choice,
+                probabilities,
+                confidence,
+            } => Self::Choice {
+                choice,
+                probabilities,
+                confidence,
+            },
+            crate::typesafe::Answer::Score {
+                score,
+                legend,
+                probabilities,
+                confidence,
+            } => Self::Score {
+                score,
+                legend: legend
+                    .into_iter()
+                    .map(|(key, value)| {
+                        (
+                            key,
+                            match value {
+                                Value::String(text) => text,
+                                value => value.to_string(),
+                            },
+                        )
+                    })
+                    .collect(),
+                probabilities,
+                confidence,
+            },
+        }
+    }
+}
+
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct TypeSafeEvaluation {
+    pub model: String,
+    pub answers: HashMap<String, TypeSafeAnswer>,
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+}
+
+/// Jev evaluation client, separate from the conversational Provider API.
+#[derive(uniffi::Object)]
+pub struct TypeSafeClient {
+    client: crate::typesafe::TypeSafeClient,
+}
+
+#[uniffi::export]
+impl TypeSafeClient {
+    /// `state_json` must encode null, a string, object, or array.
+    pub async fn evaluate(
+        &self,
+        model: String,
+        state_json: String,
+        questions: HashMap<String, TypeSafeQuestion>,
+    ) -> Result<TypeSafeEvaluation, GooseError> {
+        let state = serde_json::from_str(&state_json)?;
+        let questions = questions
+            .into_iter()
+            .map(|(id, question)| (id, question.into()))
+            .collect();
+        let client = self.client.clone();
+        let evaluation =
+            run_on_runtime(async move { client.evaluate(&model, state, questions).await })
+                .await??;
+        Ok(TypeSafeEvaluation {
+            model: evaluation.model,
+            answers: evaluation
+                .answers
+                .into_iter()
+                .map(|(id, answer)| (id, answer.into()))
+                .collect(),
+            input_tokens: evaluation.usage.input_tokens,
+            output_tokens: evaluation.usage.output_tokens,
+        })
+    }
+}
+
+/// Create a Jev client. The optional base URL is an origin or proxy prefix,
+/// optionally ending in `/v1`. The API key is supplied explicitly by the caller.
+#[uniffi::export(default(base_url = None))]
+pub fn typesafe_client(
+    api_key: String,
+    base_url: Option<String>,
+) -> Result<Arc<TypeSafeClient>, GooseError> {
+    Ok(Arc::new(TypeSafeClient {
+        client: crate::typesafe::TypeSafeClient::with_base_url(
+            api_key,
+            base_url
+                .as_deref()
+                .unwrap_or(crate::typesafe::DEFAULT_BASE_URL),
+        )?,
+    }))
+}
+
+#[uniffi::export]
+pub fn typesafe_default_model() -> String {
+    crate::typesafe::DEFAULT_MODEL.to_owned()
+}
+
 #[derive(Debug, Clone, uniffi::Enum)]
 pub enum Feature {
     Tools,

@@ -5573,12 +5573,17 @@ dependencies = [
  "goose-context-management",
  "goose-providers",
  "goose-sdk-types",
+ "httpdate",
+ "rand 0.10.2",
+ "reqwest 0.13.5",
  "rmcp 3.3.0",
+ "serde",
  "serde_json",
  "thiserror 2.0.20",
  "tokio",
  "tokio-util",
  "uniffi",
+ "wiremock",
 ]
 
 [[package]]
